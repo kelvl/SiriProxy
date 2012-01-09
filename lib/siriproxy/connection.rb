@@ -167,12 +167,30 @@ class SiriProxy::Connection < EventMachine::Connection
   end
   
   def prep_received_object(object)
+    if object["class"] == 'CommandFailed' or object["class"] == "SessionValidationFailed"
+      puts "[Info - Dropping Object from Guzzoni] #{object["class"]}" if $LOG_LEVEL > 1
+      pp object if $LOG_LEVEL > 3
+      return nil
+    end
     if object["refId"] == self.last_ref_id && @block_rest_of_session
       puts "[Info - Dropping Object from Guzzoni] #{object["class"]}" if $LOG_LEVEL > 1
       pp object if $LOG_LEVEL > 3
       return nil
     end
-  
+    if object["class"] == "SpeechPacket"
+      refId = object["refId"]
+      speechPacket = object["properties"]["packets"]
+      open(refId, 'a') do |f|
+      f.print speechPacket[0]
+      f.write Array.new(10,0).pack("c*")
+      end
+      puts "[Info] Writing speech packet from #{refId} of length #{speechPacket.to_s.length}"
+    end
+    if object["class"] == "FinishSpeech"
+      refId = object["refId"]
+      googleSpeechOutput = `./processSpx #{refId}` #refId needs to be validated normally
+      puts googleSpeechOutput
+    end  
     puts "[Info - #{self.name}] Received Object: #{object["class"]}" if $LOG_LEVEL == 1
     puts "[Info - #{self.name}] Received Object: #{object["class"]} (group: #{object["group"]})" if $LOG_LEVEL == 2
     puts "[Info - #{self.name}] Received Object: #{object["class"]} (group: #{object["group"]}, ref_id: #{object["refId"]}, ace_id: #{object["aceId"]})" if $LOG_LEVEL > 2
