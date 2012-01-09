@@ -1,3 +1,24 @@
+Modifications to Siri Proxy
+===========================
+
+Essential changes
+-----------------
+
+Function prep_received_object found in lib/siriproxy/connection.rb
+Observe how the SpeechPackets are filtered out, and then the "packets" field inside the packet written to file. RefId is shared by all packets of a single recording. RefId changes everytime you start a new recording (by hitting the speak button), and as such, packets are appended to a filename matching the refId in the packet. Every packet is seperated with 10 null characters (00). When FinishSpeech is observed on the line, the bin/processSpx script is called. refId is not validated before I actually run, so use at your own risk (additional shell commands can be thrown in for fun by malicious users)
+
+bin/processSpx
+--------------
+
+REQUIRES CURL AND SOX
+Runs my decoder program (compiled with g++ -l speex) on the refID passed in, when the user finishes speaking (this refId is identical to that in the corresponding SpeechPackets). Uses sox for a convert into flac, and then curl for upload. This is inefficient, as theoretically, Google APIs should accept (properly packed in Ogg) Speex files, but this works too. Script cleans up after itself, so you might want to modify it if you want any intermediate files.
+
+bin/decoder
+-----------
+
+Compiled on Linux, requires speex libraries. One of my first C++ programs, so it's a total mess. Sorry about that. The entire unprocessed file is loaded into array "data" (ouch). Notice how the data from the SpeechPackets are split apart again into individual packets, by looking for the 10 null characters separating them. "list<frame_pointers *> frames" stores where each packet starts in the "data" array, and how long they are. Notice how "speex_bits_read_from(&bits, (char*)((*i)->begin), ((*i)->size));" feeds each entire packet at a time to the speex library.
+
+
 Siri Proxy
 ==========
 
