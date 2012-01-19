@@ -1,22 +1,41 @@
-Modifications to Siri Proxy
-===========================
+Google Powered Siri Proxy for Non-4S iPhones
+==========================================
 
-Essential changes
------------------
+Provides limited Siri functionality to Non-4S iPhones without the need for extracting authentication keys from 4S iPhones
 
-Function prep_received_object found in lib/siriproxy/connection.rb
-Observe how the SpeechPackets are filtered out, and then the "packets" field inside the packet written to file. RefId is shared by all packets of a single recording. RefId changes everytime you start a new recording (by hitting the speak button), and as such, packets are appended to a filename matching the refId in the packet. Every packet is seperated with 10 null characters (00). When FinishSpeech is observed on the line, the bin/processSpx script is called. refId is not validated before I actually run, so use at your own risk (additional shell commands can be thrown in for fun by malicious users)
+Semi-Functional Features
+------------------------
 
-bin/processSpx
---------------
+Uses Google Chrome Speech-to-Text API to recognize spoken commands from iPhone
 
-REQUIRES CURL AND SOX
-Runs my decoder program (compiled with g++ -l speex) on the refID passed in, when the user finishes speaking (this refId is identical to that in the corresponding SpeechPackets). Uses sox for a convert into flac, and then curl for upload. This is inefficient, as theoretically, Google APIs should accept (properly packed in Ogg) Speex files, but this works too. Script cleans up after itself, so you might want to modify it if you want any intermediate files.
+Web Search through Google
+Speech Dictation
+Siri "Help"
 
-bin/decoder
------------
+SiriProxy plugins for IMDB etc. 
 
-Compiled on Linux, requires speex libraries. One of my first C++ programs, so it's a total mess. Sorry about that. The entire unprocessed file is loaded into array "data" (ouch). Notice how the data from the SpeechPackets are split apart again into individual packets, by looking for the 10 null characters separating them. "list<frame_pointers *> frames" stores where each packet starts in the "data" array, and how long they are. Notice how "speex_bits_read_from(&bits, (char*)((*i)->begin), ((*i)->size));" feeds each entire packet at a time to the speex library.
+
+TL;DR 
+-----
+
+Extracts speech packets from the when packets are sent from the iPhone to Guzzoni, re-encodes them into Speex according to the format detailed in Chrome source. Transmits the Speex speech to Google and retrieves the recognized text. Emulates Guzzoni's SpeechRecognized and returns the recognized text back to the iPhone. 
+The same SpeechRecognized packets are also used to trigger SiriProxy plugins.
+
+Developers can use the SiriProxy APIs to emulate actual Siri features (create notes / reminders etc). Basic web search has been implemented as an example
+
+SpeexDec C Extension 
+--------------------
+
+I have included a C extension bin/speexext that provides the transcoding capabilities directly within Ruby. I used that to transcode Speex packets from the iPhone into a format that Chrome Speech API uses.
+
+Currently speexdec.so is compiled on a 32bit Ubuntu box, be sure to re-make the extension before running the proxy
+
+Starting the proxy
+------------------
+
+To start the proxy go to bin/ and run:
+
+rvmsudo ./siriproxy.sh server
 
 
 Siri Proxy

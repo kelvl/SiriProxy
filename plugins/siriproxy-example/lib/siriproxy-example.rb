@@ -27,7 +27,7 @@ class SiriProxy::Plugin::Example < SiriProxy::Plugin
     #    modifications made to it)
   end 
 
-  listen_for /test siri proxy/i do
+  listen_for /test hello proxy/i do
     say "Siri Proxy is up and running!" #say something to the user!
     
     request_completed #always complete your request! Otherwise the phone will "spin" at the user!
@@ -39,7 +39,7 @@ class SiriProxy::Plugin::Example < SiriProxy::Plugin
   end 
 
   #demonstrate state change
-  listen_for /siri proxy test state/i do
+  listen_for /hello proxy test state/i do
     set_state :some_state #set a state... this is useful when you want to change how you respond after certain conditions are met!
     say "I set the state, try saying 'confirm state change'"
     
@@ -54,7 +54,7 @@ class SiriProxy::Plugin::Example < SiriProxy::Plugin
   end
   
   #demonstrate asking a question
-  listen_for /siri proxy test question/i do
+  listen_for /hello proxy test question/i do
     response = ask "Is this thing working?" #ask the user for something
     
     if(response =~ /yes/i) #process their response
@@ -67,7 +67,7 @@ class SiriProxy::Plugin::Example < SiriProxy::Plugin
   end
   
   #demonstrate capturing data from the user (e.x. "Siri proxy number 15")
-  listen_for /siri proxy number ([0-9,]*[0-9])/i do |number|
+  listen_for /hello proxy number ([0-9,]*[0-9])/i do |number|
     say "Detected number: #{number}"
     
     request_completed #always complete your request! Otherwise the phone will "spin" at the user!
@@ -87,5 +87,15 @@ class SiriProxy::Plugin::Example < SiriProxy::Plugin
     send_object add_views #send_object takes a hash or a SiriObject object
     
     request_completed #always complete your request! Otherwise the phone will "spin" at the user!
+  end
+  
+  listen_for /help/i do 
+  	send_object generate_show_help(last_ref_id)
+  	request_completed
+  end
+  
+  listen_for /search the web for (.+)$/i do |query|
+  	view = generate_web_search_request_completed(last_ref_id, query)
+  	send_object view
   end
 end

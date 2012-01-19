@@ -1,10 +1,12 @@
 require 'cfpropertylist'
 require 'siriproxy/interpret_siri'
+require 'siriproxy/google'
+require 'siri_objects'
 
 class SiriProxy::Connection < EventMachine::Connection
   include EventMachine::Protocols::LineText2
   
-  attr_accessor :other_connection, :name, :ssled, :output_buffer, :input_buffer, :processed_headers, :unzip_stream, :zip_stream, :consumed_ace, :unzipped_input, :unzipped_output, :last_ref_id, :plugin_manager
+  attr_accessor :other_connection, :name, :ssled, :output_buffer, :input_buffer, :processed_headers, :unzip_stream, :zip_stream, :consumed_ace, :unzipped_input, :unzipped_output, :last_ref_id, :plugin_manager, :speechPackets
 
   def last_ref_id=(ref_id)
     @last_ref_id = ref_id
@@ -21,6 +23,7 @@ class SiriProxy::Connection < EventMachine::Connection
     self.unzip_stream = Zlib::Inflate.new
     self.zip_stream = Zlib::Deflate.new
     self.consumed_ace = false
+    self.speechPackets = {}
   end
 
   def post_init
@@ -62,7 +65,9 @@ class SiriProxy::Connection < EventMachine::Connection
   
   def flush_output_buffer
     return if output_buffer.empty?
-  
+  	
+#   	return if other_connection.name == "Guzzoni" #don't talk to guzzoni
+  	
     if other_connection.ssled
       puts "[Debug - #{self.name}] Forwarding #{self.output_buffer.length} bytes of data to #{other_connection.name}" if $LOG_LEVEL > 5
       #puts  self.output_buffer.to_hex if $LOG_LEVEL > 5
@@ -86,7 +91,7 @@ class SiriProxy::Connection < EventMachine::Connection
       
       if(object != nil) #will be nil if the next object is a ping/pong
         new_object = prep_received_object(object) #give the world a chance to mess with folks
-    
+    	
         inject_object_to_output_stream(new_object) if new_object != nil #might be nil if "the world" decides to rid us of the object
       end
     end
@@ -131,12 +136,16 @@ class SiriProxy::Connection < EventMachine::Connection
   
   
   def parse_object(object_data)
-    plist = CFPropertyList::List.new(:data => object_data)    
+    plist = CFPropertyList::List.new(:data => object_data)
+    
+#     Examine the PLIST in XML directly
+#     xml_plist = plist.to_str(CFPropertyList::List::FORMAT_XML)
+#     puts xml_plist
     object = CFPropertyList.native_types(plist.value)
     
     object
   end
-  
+    
   def inject_object_to_output_stream(object)
     if object["refId"] != nil && !object["refId"].empty?
       @block_rest_of_session = false if @block_rest_of_session && self.last_ref_id != object["refId"] #new session
@@ -177,25 +186,67 @@ class SiriProxy::Connection < EventMachine::Connection
       pp object if $LOG_LEVEL > 3
       return nil
     end
+    if object["class"] == "StartSpeechDictation" || object["class"] == "StartSpeechRequest"
+	  puts "[Info - Dropping Object from Guzzoni] #{object["class"]}" if $LOG_LEVEL > 1
+      pp object if $LOG_LEVEL > 3
+      return nil
+    end
     if object["class"] == "SpeechPacket"
       refId = object["refId"]
       speechPacket = object["properties"]["packets"]
-      open(refId, 'a') do |f|
-      f.print speechPacket[0]
-      f.write Array.new(10,0).pack("c*")
+      packet = speechPacket[0].unpack("H*")[0].upcase + "\n"
+      if self.speechPackets.has_key? refId
+      	self.speechPackets[refId].concat(packet)
+      else
+      	self.speechPackets[refId] = packet
       end
-      puts "[Info] Writing speech packet from #{refId} of length #{speechPacket.to_s.length}"
+      puts "[Info - Dropping Object from Guzzoni] Writing speech packet from #{refId} of length #{speechPacket.to_s.length}"
+      return nil # drop speech packets from guzzoni
     end
     if object["class"] == "FinishSpeech"
       refId = object["refId"]
-      googleSpeechOutput = `./processSpx #{refId}` #refId needs to be validated normally
-      puts googleSpeechOutput
+      data = self.speechPackets[refId]
+      Thread.new(refId, data) { |refId, data| 
+		speech = SiriProxy::Google.speech_recognize(data)
+		
+		# inject the generated speech_recognized packet 
+		speech_packet = generate_speech_recognized(refId, speech["utterance"])
+		self.other_connection.inject_object_to_output_stream(speech_packet)
+		if plugin_manager.process(speech["utterance"]) 
+			@block_rest_of_session = true
+		else
+			self.other_connection.inject_object_to_output_stream(generate_siri_utterance(refId, "Sorry I am unable to understand your query"))
+			self.other_connection.inject_object_to_output_stream(generate_request_completed(refId))
+		end
+		puts "[Info - Google Speech Recognition] Injecting Speech Recognized Packet: #{speech} "  
+		pp speech_packet if $LOG_LEVEL == 3
+      }
+      self.speechPackets.delete refId
+      return nil
     end  
     puts "[Info - #{self.name}] Received Object: #{object["class"]}" if $LOG_LEVEL == 1
     puts "[Info - #{self.name}] Received Object: #{object["class"]} (group: #{object["group"]})" if $LOG_LEVEL == 2
     puts "[Info - #{self.name}] Received Object: #{object["class"]} (group: #{object["group"]}, ref_id: #{object["refId"]}, ace_id: #{object["aceId"]})" if $LOG_LEVEL > 2
-    pp object if $LOG_LEVEL > 3
-    
+    pp object if $LOG_LEVEL > 3 && object["class"] != "SpeechPacket"
+
+	if self.name == "iPhone" && !( object["class"] == "CreateAssistant"  || object["class"] == "CreateSessionInfoRequest" )
+		return nil
+	end
+
+#     if object["class"] == "CreateAssistant"
+#     	refId = object["aceId"]
+# #     	File.open("#{refId}.txt", "w") {|f| f.write(object["properties"]["certificate"].unpack("H*").first) }
+#     	packet = generate_get_session_certificate_response(refId)
+#     	self.other_connection.inject_object_to_output_stream(packet)
+#     	puts "[Info - Generating Get Session Certificate Response]"
+#     	pp packet
+# #     	return nil
+#     end
+#     
+#     if object["class"] == "GetSessionCertificateResponse"
+#     	return nil
+#     end
+        
     #keeping this for filters
     new_obj = received_object(object)
     if new_obj == nil 
@@ -208,7 +259,7 @@ class SiriProxy::Connection < EventMachine::Connection
     speech = SiriProxy::Interpret.speech_recognized(object)
     if speech != nil
       inject_object_to_output_stream(object)
-      block_rest_of_session if plugin_manager.process(speech) 
+      @block_rest_of_session = true if plugin_manager.process(speech) 
       return nil
     end
     
